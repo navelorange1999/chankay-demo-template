@@ -1,0 +1,23 @@
+main {
+  box-sizing: border-box;
+  margin: 4rem auto;
+  max-width: 35rem;
+  padding: 0 1.5rem;
+  font-family: system-ui, sans-serif;
+}
+.stage {
+  display: grid;
+  place-items: center;
+  height: 15rem;
+  margin-block: 2rem;
+  border: 1px solid currentColor;
+  border-radius: 1rem;
+}
+.tile {
+  width: 5rem;
+  height: 5rem;
+  background: #40857c;
+  border-radius: 0.75rem 2rem 0.75rem 0.75rem;
+}
+main label { display: flex; justify-content: space-between; }
+main input { width: 100%; margin: 1rem 0; }

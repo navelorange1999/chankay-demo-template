@@ -1,0 +1,90 @@
+name: Build and release a Chankay demo
+on:
+  workflow_call:
+    inputs:
+      slug:
+        description: Project slug, defaulting to the caller repository name
+        type: string
+        required: false
+      locale:
+        description: HTML shell locale (en or zh-CN)
+        type: string
+        default: en
+        required: false
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Build caller's static demo
+        env:
+          DEMO_RELEASE: ${{ github.sha }}
+          DEMO_SLUG: ${{ inputs.slug || github.event.repository.name }}
+          DEMO_LOCALE: ${{ inputs.locale }}
+        run: bash scripts/build-demo.sh
+      - id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: demo-dist-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.repository != 'navelorange1999/chankay-demo-template' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    environment: demo-release
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ARTIFACT_ID: ${{ needs.build.outputs.artifact }}
+      DEMO_SLUG: ${{ inputs.slug || github.event.repository.name }}
+      DEMO_LOCALE: ${{ inputs.locale }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Require the central workflow's immutable revision
+        env:
+          IMPLEMENTATION_REPO: ${{ job.workflow_repository }}
+          IMPLEMENTATION_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "$IMPLEMENTATION_REPO" == "navelorange1999/chankay-demo-template" ]]
+          [[ "$IMPLEMENTATION_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: navelorange1999/chankay-demo-template
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: publisher
+      - name: Verify provenance and retrieve raw build archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALLOWED_SLUG: ${{ vars.DEMO_SLUG }}
+          ALLOWED_BRANCH: ${{ vars.DEMO_RELEASE_BRANCH }}
+        run: python3 -I publisher/release.py fetch
+      - name: Verify inventory, upload immutable objects and promote
+        env:
+          ALLOWED_SLUG: ${{ vars.DEMO_SLUG }}
+          ALLOWED_BRANCH: ${{ vars.DEMO_RELEASE_BRANCH }}
+          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_CONFIG_FILE: /dev/null
+          AWS_SHARED_CREDENTIALS_FILE: /dev/null
+          AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: python3 -I publisher/release.py publish

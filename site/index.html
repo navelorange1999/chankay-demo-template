@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="chankay-shell" content="v1">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="canonical" href="https://demos.chankay.com/{{slug}}/">
+    <link rel="stylesheet" href="{{asset_base}}app.css">
+    <title>Rotation study</title>
+  </head>
+  <body>
+    <div data-shell-slot="header"></div>
+    <main>
+      <h1>Rotation study</h1>
+      <div class="stage" aria-hidden="true"><div class="tile"></div></div>
+      <label for="angle">Rotation <output id="degrees" for="angle">0°</output></label>
+      <input id="angle" type="range" min="-180" max="180" value="0">
+    </main>
+    <div data-shell-slot="footer"></div>
+    <script type="module" src="{{asset_base}}app.js"></script>
+  </body>
+</html>

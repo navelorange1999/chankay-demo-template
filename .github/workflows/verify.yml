@@ -1,0 +1,21 @@
+name: Verify publisher and starter
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    if: github.repository == 'navelorange1999/chankay-demo-template'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -v
+      - name: Build example and validate its generated inventory
+        env:
+          DEMO_SLUG: rotation-study
+          DEMO_RELEASE: ${{ github.sha }}
+        run: |
+          bash scripts/build-demo.sh
+          (cd dist && zip -q -r ../starter.zip .)
+          python3 -c 'import os, sys; sys.path.insert(0, "publisher"); from release import read_artifact; assert len(read_artifact("starter.zip", "en", os.environ["DEMO_SLUG"], os.environ["DEMO_RELEASE"])) == 4'
