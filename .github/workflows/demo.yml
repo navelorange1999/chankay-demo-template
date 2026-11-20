@@ -1,0 +1,14 @@
+name: Release demo
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  demo:
+    uses: navelorange1999/chankay-demo-template/.github/workflows/release.yml@4d0102519cb315c157ad306d3c85858d9a003b1e
