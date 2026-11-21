@@ -189,7 +189,7 @@ class R2:
         require(re.fullmatch(r"https://[a-f0-9]{32}(?:\.(?:eu|fedramp))?\.r2\.cloudflarestorage\.com/?", endpoint),
                 "Invalid R2 account endpoint")
         require(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"),
-                "Configure R2 access in the demo-release environment")
+                "Configure R2 access in the release environment")
         self.endpoint = endpoint
 
     def call(self, args, expected):

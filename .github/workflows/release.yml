@@ -46,7 +46,7 @@ jobs:
     needs: build
     if: github.repository != 'navelorange1999/chankay-demo-template' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
-    environment: demo-release
+    environment: release
     permissions:
       actions: read
       contents: read
