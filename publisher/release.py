@@ -174,8 +174,7 @@ def settings(env):
             and env["GITHUB_EVENT_NAME"] in {"push", "workflow_dispatch"}, "Unauthorized release ref or event")
     sha = env["GITHUB_SHA"]
     require(re.fullmatch("[0-9a-f]{40}", sha), "Invalid commit SHA")
-    require(re.fullmatch("[1-9][0-9]{0,12}", env["GITHUB_RUN_NUMBER"]), "Invalid run watermark")
-    return slug, sha, int(env["GITHUB_RUN_NUMBER"])
+    return slug, sha
 
 
 class Object(NamedTuple):
@@ -221,35 +220,46 @@ class R2:
             return result is not None
 
 
-def pointer_state(store, key, release, run):
+def is_descendant(repo, base, head):
+    require(re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", repo)
+            and repo.split("/", 1)[1] not in {".", ".."}, "Invalid repository")
+    require(all(re.fullmatch("[0-9a-f]{40}", sha) for sha in (base, head)), "Invalid comparison commit SHA")
+    endpoint = f"repos/{repo}/compare/{base}...{head}"
+    reply = subprocess.run(["gh", "api", "--hostname", "github.com", "--method", "GET", endpoint,
+                            "-f", "per_page=1", "--jq", ".status"], capture_output=True, timeout=30)
+    require(reply.returncode == 0, "GitHub commit comparison failed")
+    return reply.stdout.strip() == b"ahead"
+
+
+def pointer_state(store, key, release, compare_commits):
     current = store.get(key)
     if current is None:
         return None, False
     pointer = json.loads(current.data)
-    require(isinstance(pointer, dict) and re.fullmatch("[a-f0-9]{40}", str(pointer.get("release")))
-            and type(pointer.get("run")) is int and pointer["run"] > 0, "Invalid current pointer")
-    if pointer["release"] == release and pointer["run"] == run:
+    active = pointer.get("release") if isinstance(pointer, dict) else None
+    require(isinstance(active, str) and re.fullmatch("[a-f0-9]{40}", active), "Invalid current pointer")
+    if active == release:
         return current.etag, True
-    require(pointer["run"] < run, "Superseded release run")
+    require(compare_commits(active, release), "Release commit does not descend from the active commit")
     return current.etag, False
 
 
-def publish(store, slug, release, run, files):
+def publish(store, slug, release, files, compare_commits):
     root = "projects/" + slug + "/"
     pointer = root + "current.json"
-    pointer_state(store, pointer, release, run)
+    pointer_state(store, pointer, release, compare_commits)
     for name, (data, mime) in files.items():
         key = root + "releases/" + release + "/" + name
         store.put(key, data, mime)
         stored = store.get(key)
         require(stored and stored.data == data and stored.mime == mime, "Immutable object read-back mismatch")
     for _ in range(4):
-        etag, promoted = pointer_state(store, pointer, release, run)
+        etag, promoted = pointer_state(store, pointer, release, compare_commits)
         if promoted:
             return
-        payload = json.dumps({"release": release, "run": run}).encode()
+        payload = json.dumps({"release": release}).encode()
         if store.put(pointer, payload, "application/json", etag):
-            _, promoted = pointer_state(store, pointer, release, run)
+            _, promoted = pointer_state(store, pointer, release, compare_commits)
             require(promoted, "Pointer read-back mismatch")
             return
     raise ReleaseError("Concurrent pointer update, retry this run")
@@ -284,7 +294,7 @@ def fetch_artifact(env, destination):
 if __name__ == "__main__":
     import sys
     try:
-        slug, sha, run = settings(os.environ)
+        slug, sha = settings(os.environ)
         archive_path = Path(os.environ["RUNNER_TEMP"]) / "demo-release-artifact.zip"
         if sys.argv[1:] == ["fetch"]:
             fetch_artifact(os.environ, archive_path)
@@ -292,8 +302,10 @@ if __name__ == "__main__":
             require(archive_path.stat().st_size <= MAX_ARCHIVE, "Invalid archive size")
             with archive_path.open("rb") as stream:
                 files = read_artifact(stream, os.environ["DEMO_LOCALE"], slug, sha)
-            publish(R2(os.environ["R2_ENDPOINT_URL"]), slug, sha, run, files)
-            print(f"Verified {len(files) - 1} files and promoted {slug} at {sha} (run {run}).")
+            repo = os.environ["GITHUB_REPOSITORY"]
+            publish(R2(os.environ["R2_ENDPOINT_URL"]), slug, sha, files,
+                    lambda base, head: is_descendant(repo, base, head))
+            print(f"Verified {len(files) - 1} files and promoted {slug} at {sha}.")
         else:
             raise ReleaseError("Invalid release command")
     except (ValueError, RuntimeError, OSError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
