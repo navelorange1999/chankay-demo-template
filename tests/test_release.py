@@ -15,6 +15,7 @@ spec.loader.exec_module(release)
 
 PAGE = b'<html><head><meta name="chankay-shell" content="v1"></head><body><div data-shell-slot="header"></div><main></main><div data-shell-slot="footer"></div></body></html>'
 SHA = "a" * 40
+NEXT_SHA = "b" * 40
 
 
 def read_artifact(stream, locale):
@@ -83,18 +84,35 @@ class ReleaseTests(unittest.TestCase):
     def test_promotes_only_complete_immutable_release(self):
         store = Store()
         files = read_artifact(archive(), "en")
-        release.publish(store, "demo", SHA, 3, files)
+        release.publish(store, "demo", SHA, files, lambda *_: False)
         self.assertEqual(store.writes[-2:], ["projects/demo/releases/" + SHA + "/release.json", "projects/demo/current.json"])
         count = len(store.writes)
-        release.publish(store, "demo", SHA, 3, files)
+        release.publish(store, "demo", SHA, files, lambda *_: False)
         self.assertEqual(len(store.writes), count)
         changed = read_artifact(archive({"index.html": PAGE, "main.js": b"other"}), "en")
         with self.assertRaises(ValueError):
-            release.publish(store, "demo", SHA, 4, changed)
-        for stale in (2, 3):
+            release.publish(store, "demo", SHA, changed, lambda *_: False)
+        for non_descendant in (NEXT_SHA, "c" * 40):
             with self.assertRaises(ValueError):
-                release.publish(store, "demo", "b" * 40, stale, files)
-        self.assertEqual(json.loads(store.get("projects/demo/current.json").data), {"release": SHA, "run": 3})
+                release.publish(store, "demo", non_descendant, files, lambda *_: False)
+        self.assertEqual(json.loads(store.get("projects/demo/current.json").data), {"release": SHA})
+
+    def test_legacy_pointer_advances_by_commit_ancestry(self):
+        store = Store()
+        pointer = "projects/demo/current.json"
+        store.put(pointer, json.dumps({"release": SHA, "run": 400}).encode(), "application/json")
+        files = read_artifact(archive(), "en")
+        release.publish(store, "demo", NEXT_SHA, files, lambda base, head: (base, head) == (SHA, NEXT_SHA))
+        self.assertEqual(json.loads(store.get(pointer).data), {"release": NEXT_SHA})
+
+    def test_compare_requires_a_descendant_and_fails_closed(self):
+        for status in (b"ahead", b"behind", b"diverged", b"identical"):
+            reply = SimpleNamespace(returncode=0, stdout=status + b"\n")
+            with self.subTest(status=status), patch.object(release.subprocess, "run", return_value=reply):
+                self.assertEqual(release.is_descendant("owner/demo", SHA, NEXT_SHA), status == b"ahead")
+        with patch.object(release.subprocess, "run", return_value=SimpleNamespace(returncode=1)):
+            with self.assertRaises(ValueError):
+                release.is_descendant("owner/demo", SHA, NEXT_SHA)
 
     def test_legacy_inventory_preserves_exact_immutable_bytes(self):
         files = read_artifact(archive(), "en")
@@ -142,7 +160,7 @@ class ReleaseTests(unittest.TestCase):
             return True
         store.put = corrupt
         with self.assertRaises(ValueError):
-            release.publish(store, "demo", SHA, 1, read_artifact(archive(),"en"))
+            release.publish(store, "demo", SHA, read_artifact(archive(), "en"), lambda *_: False)
         self.assertNotIn("projects/demo/current.json", store.objects)
 
     def test_concurrent_promotion_preserves_winner(self):
@@ -150,21 +168,21 @@ class ReleaseTests(unittest.TestCase):
         put = store.put
         def race(key, data, mime, etag=None):
             if key.endswith("current.json"):
-                put(key, json.dumps({"release": "b" * 40, "run": 5}).encode(), mime, etag)
+                put(key, json.dumps({"release": NEXT_SHA}).encode(), mime, etag)
             return put(key, data, mime, etag)
         store.put = race
         with self.assertRaises(ValueError):
-            release.publish(store, "demo", SHA, 3, read_artifact(archive(),"en"))
-        self.assertEqual(json.loads(store.get("projects/demo/current.json").data)["run"], 5)
+            release.publish(store, "demo", SHA, read_artifact(archive(), "en"), lambda *_: False)
+        self.assertEqual(json.loads(store.get("projects/demo/current.json").data), {"release": NEXT_SHA})
 
     def test_environment_protects_slug_and_branch(self):
         env = dict(GITHUB_REPOSITORY="owner/demo", GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main",
-                   GITHUB_EVENT_NAME="push", GITHUB_SHA=SHA, GITHUB_RUN_NUMBER="1", DEMO_SLUG="demo")
-        self.assertEqual(release.settings(env), ("demo", SHA, 1))
+                   GITHUB_EVENT_NAME="push", GITHUB_SHA=SHA, DEMO_SLUG="demo")
+        self.assertEqual(release.settings(env), ("demo", SHA))
         for overrides in ({"DEMO_SLUG":"other"}, {"GITHUB_REF":"refs/heads/feature"}, {"GITHUB_EVENT_NAME":"pull_request"},
                           {"ALLOWED_SLUG":"api", "DEMO_SLUG":"api"}, {"GITHUB_SHA":"main"}):
             with self.subTest(overrides=overrides), self.assertRaises(ValueError):
                 release.settings(env | overrides)
         self.assertEqual(release.settings(env | dict(GITHUB_REF="refs/heads/pilot", ALLOWED_BRANCH="pilot",
                                                      DEMO_SLUG="alternate", ALLOWED_SLUG="alternate")),
-                         ("alternate", SHA, 1))
+                         ("alternate", SHA))

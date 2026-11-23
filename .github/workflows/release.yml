@@ -84,6 +84,7 @@ jobs:
         run: python3 -I publisher/release.py fetch
       - name: Verify inventory, upload immutable objects and promote
         env:
+          GH_TOKEN: ${{ github.token }}
           ALLOWED_SLUG: ${{ vars.DEMO_SLUG }}
           ALLOWED_BRANCH: ${{ vars.DEMO_RELEASE_BRANCH }}
           R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
